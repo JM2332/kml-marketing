@@ -20,7 +20,7 @@ db.enablePersistence({ synchronizeTabs: true }).catch(err => {
 });
 const SHARED_LOGIN_EMAIL = 'jacob@kmlfoodservice.internal';
 
-// Cloud Function endpoint for the email-scan proxy. Region defaults to us-central1.
+// Cloud Function endpoint for the email-scan proxy (region defaults to us-central1).
 const SCAN_EMAIL_URL = 'https://us-central1-kml-marketing.cloudfunctions.net/scanEmail';
 
 const CATEGORIES = {
@@ -175,16 +175,20 @@ function elementToResult(el, center, activeCategories) {
 async function fetchVenues(center, radiusMiles, activeCategories) {
   const bbox = bboxFromCenter(center.lat, center.lon, radiusMiles);
   const query = buildOverpassQuery(bbox, activeCategories);
-  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  // Called directly from the browser (not proxied) — Overpass's public API blocks
+  // non-browser clients and, separately, browser requests from Firebase's *.web.app
+  // hosting domain specifically. A real browser on a github.io origin is unaffected,
+  // which is why this app is served from GitHub Pages rather than Firebase Hosting.
+  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://lz4.overpass-api.de/api/interpreter', 'https://z.overpass-api.de/api/interpreter'];
   let lastErr;
   for (const url of endpoints) {
     try {
       setScanStatus(`Querying ${new URL(url).hostname}… (can take up to a minute)`);
-      const res = await fetchWithTimeout(url, { method: 'POST', body: 'data=' + encodeURIComponent(query) }, 75000);
+      const res = await fetchWithTimeout(url, { method: 'POST', body: 'data=' + encodeURIComponent(query) }, 60000);
       if (!res.ok) throw new Error(`Overpass returned ${res.status}`);
       const data = await res.json();
       const out = []; const seen = new Set();
-      for (const el of data.elements) {
+      for (const el of data.elements || []) {
         const v = elementToResult(el, center, activeCategories);
         if (!v || v.distance > radiusMiles || seen.has(v.id)) continue;
         seen.add(v.id); out.push(v);
@@ -197,6 +201,20 @@ async function fetchVenues(center, radiusMiles, activeCategories) {
 }
 
 function setScanStatus(msg) { document.getElementById('scan-status').textContent = msg || ''; }
+
+async function callFunction(url, body, timeoutMs) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not signed in');
+  const idToken = await user.getIdToken();
+  const res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
+    body: JSON.stringify(body),
+  }, timeoutMs || 20000);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
 
 // ---------- scan view ----------
 
@@ -275,19 +293,7 @@ document.getElementById('scan-emails-btn').onclick = async () => {
 };
 
 async function scanEmailForWebsite(url) {
-  const user = auth.currentUser;
-  if (!user) throw new Error('Not signed in');
-  const idToken = await user.getIdToken();
-  const res = await fetchWithTimeout(SCAN_EMAIL_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
-    body: JSON.stringify({ url }),
-  }, 20000);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Scan returned ${res.status}`);
-  }
-  const data = await res.json();
+  const data = await callFunction(SCAN_EMAIL_URL, { url }, 20000);
   return data.email ? data : null;
 }
 

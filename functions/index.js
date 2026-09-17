@@ -11,6 +11,7 @@ const admin = require('firebase-admin');
 admin.initializeApp();
 
 const ALLOWED_ORIGINS = new Set([
+  'https://jm2332.github.io',
   'https://kml-marketing.web.app',
   'https://kml-marketing.firebaseapp.com',
   'http://localhost:5000',
@@ -89,23 +90,30 @@ async function fetchPage(url) {
   }
 }
 
-exports.scanEmail = functions.https.onRequest(async (req, res) => {
+// Shared CORS + Firebase-auth gate. Returns true if the request was handled (OPTIONS
+// preflight, wrong method, or a rejected/missing auth token) and the caller should stop.
+async function gate(req, res) {
   const origin = req.get('Origin');
   if (origin && ALLOWED_ORIGINS.has(origin)) res.set('Access-Control-Allow-Origin', origin);
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
-  if (req.method !== 'POST') { res.status(405).json({ error: 'POST only' }); return; }
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return true; }
+  if (req.method !== 'POST') { res.status(405).json({ error: 'POST only' }); return true; }
 
   const authHeader = req.get('Authorization') || '';
   const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!idToken) { res.status(401).json({ error: 'Missing auth token' }); return; }
+  if (!idToken) { res.status(401).json({ error: 'Missing auth token' }); return true; }
   try {
     await admin.auth().verifyIdToken(idToken);
   } catch (e) {
     res.status(401).json({ error: 'Invalid auth token' });
-    return;
+    return true;
   }
+  return false;
+}
+
+exports.scanEmail = functions.https.onRequest(async (req, res) => {
+  if (await gate(req, res)) return;
 
   const rawUrl = (req.body && req.body.url || '').trim();
   let target;
@@ -143,3 +151,4 @@ exports.scanEmail = functions.https.onRequest(async (req, res) => {
     res.status(200).json({ email: null, error: e.message });
   }
 });
+
