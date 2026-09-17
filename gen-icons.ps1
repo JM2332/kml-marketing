@@ -29,10 +29,13 @@ function New-Icon($size, $path) {
   $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
   $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
 
-  $left = $size * 0.24
-  $right = $size * 0.76
-  $top = $size * 0.34
-  $bottom = $size * 0.68
+  # Envelope kept inside a conservative ~42%-of-canvas safe box (same margin
+  # price-watch's icon fix landed on) so it survives the maskable-icon safe-zone
+  # crop that Android/iOS apply on top of "purpose: maskable" icons.
+  $left = $size * 0.29
+  $right = $size * 0.71
+  $top = $size * 0.365
+  $bottom = $size * 0.635
   $rectW = $right - $left
   $rectH = $bottom - $top
   $cornerR = $rectH * 0.18
